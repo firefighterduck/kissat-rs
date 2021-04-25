@@ -1,0 +1,69 @@
+use std::env;
+use std::fs::read_dir;
+use std::path::PathBuf;
+use std::process::{Command, Output, Stdio};
+
+fn handle_command_output(output: Output) {
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let out = String::from_utf8_lossy(&output.stdout);
+        panic!("Build error:\nSTDERR:{}\nSTDOUT:{}", err, out);
+    }
+}
+
+fn main() {
+    let current_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let kissat_dir = current_dir.join("kissat");
+    let kissat_build_dir = kissat_dir.join("build");
+
+    // Check for the submodule
+    if !kissat_dir.exists() {
+        println!("No directory at {:?}!", kissat_dir);
+        panic!();
+    }
+    if read_dir(&kissat_dir).unwrap().count() == 0 {
+        println!("Empty directory {:?}!", kissat_dir);
+        panic!();
+    }
+
+    // Configure the kissat build system
+    let configure = "./configure";
+    let configure_args = vec!["-fPIC"];
+    let configure_output = Command::new(configure)
+        .args(configure_args)
+        .current_dir(&kissat_dir)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .output()
+        .expect("configure script failed!");
+    handle_command_output(configure_output);
+
+    // Build kissat
+    let make = "make";
+    let make_output = Command::new(make)
+        .current_dir(&kissat_dir)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .output()
+        .expect("make failed");
+    handle_command_output(make_output);
+
+    // Make libkissat linkable
+    println!(
+        "cargo:rustc-link-search=native={}",
+        kissat_build_dir.display()
+    );
+    println!("cargo:rerun-if-changed=wrapper.h");
+
+    // Generate bindings
+    let bindings = bindgen::Builder::default()
+        .header("wrapper.h")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .generate()
+        .expect("Unable to generate bindings!");
+
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    bindings
+        .write_to_file(out_dir.join("bindings.rs"))
+        .expect("Couldn't write bindings!");
+}
