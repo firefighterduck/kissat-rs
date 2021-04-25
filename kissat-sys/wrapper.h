@@ -1,1 +1,1 @@
-#include "kissat/src/internal.h"
+#include "kissat/src/kissat.h"
