@@ -3,11 +3,14 @@ use std::fs::read_dir;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-fn handle_command_output(output: Output) {
+fn handle_command_output(cmd: &str, output: Output) {
     if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let out = String::from_utf8_lossy(&output.stdout);
-        panic!("Build error:\nSTDERR:{}\nSTDOUT:{}", err, out);
+        let out_contents = String::from_utf8_lossy(&output.stdout);
+        let err_contents = String::from_utf8_lossy(&output.stderr);
+        panic!(
+            "Build error while executing stage{}:\nSTDERR:{}\nSTDOUT:{}",
+            cmd, err_contents, out_contents
+        );
     }
 }
 
@@ -36,7 +39,7 @@ fn main() {
         .stderr(Stdio::inherit())
         .output()
         .expect("configure script failed!");
-    handle_command_output(configure_output);
+    handle_command_output(configure, configure_output);
 
     // Build kissat
     let make = "make";
@@ -46,7 +49,7 @@ fn main() {
         .stderr(Stdio::inherit())
         .output()
         .expect("make failed");
-    handle_command_output(make_output);
+    handle_command_output(make, make_output);
 
     // Make libkissat linkable
     println!(
@@ -59,6 +62,13 @@ fn main() {
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .blocklist_type("_Float64x")
+        .blocklist_function("strtold")
+        .blocklist_function("qecvt")
+        .blocklist_function("qfcvt")
+        .blocklist_function("qgcvt")
+        .blocklist_function("qecvt_r")
+        .blocklist_function("qfcvt_r")
         .generate()
         .expect("Unable to generate bindings!");
 
