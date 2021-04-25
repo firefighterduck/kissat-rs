@@ -8,7 +8,7 @@ fn handle_command_output(cmd: &str, output: Output) {
         let out_contents = String::from_utf8_lossy(&output.stdout);
         let err_contents = String::from_utf8_lossy(&output.stderr);
         panic!(
-            "Build error while executing stage{}:\nSTDERR:{}\nSTDOUT:{}",
+            "Build error while executing command {}:\nSTDERR:{}\nSTDOUT:{}",
             cmd, err_contents, out_contents
         );
     }
@@ -31,7 +31,7 @@ fn main() {
 
     // Configure the kissat build system
     let configure = "./configure";
-    let configure_args = vec!["-fPIC"];
+    let configure_args = vec!["--quiet", "-fPIC"];
     let configure_output = Command::new(configure)
         .args(configure_args)
         .current_dir(&kissat_dir)
@@ -56,6 +56,7 @@ fn main() {
         "cargo:rustc-link-search=native={}",
         kissat_build_dir.display()
     );
+    println!("cargo:rustc-link-lib=static=kissat");
     println!("cargo:rerun-if-changed=wrapper.h");
 
     // Generate bindings
