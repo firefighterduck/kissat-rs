@@ -27,17 +27,17 @@ pub trait INPUT: State {}
 
 #[derive(Debug)]
 pub enum AnyState {
-    INPUT,
-    SAT,
-    UNSAT,
+    INPUT(INPUTState),
+    SAT(SATState),
+    UNSAT(UNSATState),
 }
 impl State for AnyState {}
 impl From<SolverResult> for AnyState {
     fn from(result: SolverResult) -> Self {
         match result {
-            SolverResult::Interrupted => AnyState::INPUT,
-            SolverResult::Satisfiable => AnyState::SAT,
-            SolverResult::Unsatisfiable => AnyState::UNSAT,
+            SolverResult::Interrupted => AnyState::INPUT(INPUTState::new()),
+            SolverResult::Satisfiable => AnyState::SAT(SATState::new()),
+            SolverResult::Unsatisfiable => AnyState::UNSAT(UNSATState::new()),
         }
     }
 }
@@ -58,7 +58,7 @@ impl TryFrom<AnyState> for INPUTState {
 
     fn try_from(value: AnyState) -> Result<Self, Self::Error> {
         match value {
-            AnyState::INPUT => Ok(INPUTState::new()),
+            AnyState::INPUT(input) => Ok(input),
             state => Err(ConversionError(format!(
                 "Cannot convert from {:?} to INPUTState!",
                 state
@@ -83,7 +83,7 @@ impl TryFrom<AnyState> for SATState {
 
     fn try_from(value: AnyState) -> Result<Self, Self::Error> {
         match value {
-            AnyState::SAT => Ok(SATState::new()),
+            AnyState::SAT(sat) => Ok(sat),
             state => Err(ConversionError(format!(
                 "Cannot convert from {:?} to SATState!",
                 state
@@ -108,7 +108,7 @@ impl TryFrom<AnyState> for UNSATState {
 
     fn try_from(value: AnyState) -> Result<Self, Self::Error> {
         match value {
-            AnyState::UNSAT => Ok(UNSATState::new()),
+            AnyState::UNSAT(unsat) => Ok(unsat),
             state => Err(ConversionError(format!(
                 "Cannot convert from {:?} to UNSATState!",
                 state
