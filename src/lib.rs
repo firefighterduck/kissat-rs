@@ -118,34 +118,21 @@ impl TryFrom<AnyState> for UNSATState {
 }
 
 #[derive(Debug)]
-pub struct ErrorState;
-impl std::fmt::Display for ErrorState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Solver error! Kissat was called in an unexpected state!")
-    }
-}
-impl std::error::Error for ErrorState {}
-
-#[derive(Debug)]
 pub struct ConversionError(String);
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("State conversion error")]
     StateConversionError(ConversionError),
-    #[error("Internal solver error! Solver in erroneous state")]
-    InternalError(ErrorState),
+    #[error("Literal was not assigned a value")]
+    UnassignedLiteral(Literal),
+    #[error("Unknown solver result state")]
+    UnknownSolverResult,
 }
 
 impl From<ConversionError> for Error {
     fn from(error: ConversionError) -> Self {
         Self::StateConversionError(error)
-    }
-}
-
-impl From<ErrorState> for Error {
-    fn from(error: ErrorState) -> Self {
-        Self::InternalError(error)
     }
 }
 
@@ -197,7 +184,7 @@ impl Solver {
         let solver_result = SolverResult::try_from(result);
         solver_result
             .map(|result| (result, AnyState::from(result)))
-            .map_err(|_| Error::InternalError(ErrorState))
+            .map_err(|_| Error::UnknownSolverResult)
     }
 
     pub fn value<S: SAT>(
@@ -216,7 +203,7 @@ impl Solver {
             0 => Ok((Both, SATState::new())),
             n if n == literal => Ok((True, SATState::new())),
             n if n == -literal => Ok((False, SATState::new())),
-            _ => Err(Error::InternalError(ErrorState)),
+            n => Err(Error::UnassignedLiteral(n)),
         }
     }
 }
