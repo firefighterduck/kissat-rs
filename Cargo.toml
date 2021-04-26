@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 derive-try-from-primitive = "1.0.0"
 kissat-sys = { path = "./kissat-sys", version = "0.1.0" }
+thiserror = "1.0.24"
