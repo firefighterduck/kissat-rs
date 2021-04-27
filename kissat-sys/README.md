@@ -11,8 +11,11 @@ For a higher-level abstraction see the [kissat-rs](https://github.com/firefighte
 Add the folling lines to your Cargo.toml:
 ```toml
 [dependencies]
-kissat-sys = "0.1"
+kissat-sys = { git = "https://github.com/firefighterduck/kissat-rs", branch = "main", version = "0.1" }
 ```
+
+Due to the build-on-demand mechanism used to provide a correctly compiled Kissat library for all systems, it is not possible to provide this crate over crates.io without recreating the whole Kissat build system in `build.rs`.
+This restriction might change in the future but is out of scope for now.
 
 # License
 Kissat-sys is licensed under the [MIT license](https://github.com/firefighterduck/kissat-rs/blob/main/LICENSE) in the same way as Kissat is.
