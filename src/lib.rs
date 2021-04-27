@@ -4,7 +4,7 @@ use derive_try_from_primitive::TryFromPrimitive;
 use kissat_sys::{kissat, kissat_add, kissat_init, kissat_release, kissat_solve, kissat_value};
 use std::{collections::HashMap, convert::TryFrom, os::raw::c_int};
 
-type Literal = c_int;
+pub type Literal = c_int;
 const CLAUSE_END: Literal = 0;
 
 pub use state::*;
