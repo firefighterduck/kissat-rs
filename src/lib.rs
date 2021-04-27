@@ -2,7 +2,7 @@ mod state;
 
 use derive_try_from_primitive::TryFromPrimitive;
 use kissat_sys::{kissat, kissat_add, kissat_init, kissat_release, kissat_solve, kissat_value};
-use std::{convert::TryFrom, os::raw::c_int};
+use std::{collections::HashMap, convert::TryFrom, os::raw::c_int};
 
 type Literal = c_int;
 const CLAUSE_END: Literal = 0;
@@ -11,7 +11,7 @@ pub use state::*;
 
 #[derive(TryFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
-pub enum SolverResult {
+enum SolverResult {
     Interrupted,
     Satisfiable = 10,
     Unsatisfiable = 20,
@@ -24,12 +24,17 @@ pub enum Assignment {
     Both,
 }
 
+/// A simple wrapper struct for the Kissat solver.
+/// Exposes a safe subset of the partial IPASIR interface that
+/// Kissat exposes. Uses a type-checked state system to disallow
+/// access to these functions (e.g. calling `value` before `solve`).
 pub struct Solver {
     solver: *mut kissat,
 }
 
 impl Solver {
-    pub fn init() -> (Self, impl INPUT) {
+    /// Initialize a new solver in INPUT state
+    pub fn init() -> (Self, INPUTState) {
         let solver_pt;
         unsafe {
             solver_pt = kissat_init();
@@ -37,14 +42,18 @@ impl Solver {
         (Solver { solver: solver_pt }, INPUTState::new())
     }
 
-    pub fn add<S: State>(&mut self, literal: Literal, _state: S) -> impl INPUT {
+    /// Add a new literal to the current clause or end the clause with value 0.
+    /// Switches from any state to INPUT (e.g. for incremental solving, which Kissat
+    /// currently doesn't support).
+    pub fn add<S: State>(&mut self, literal: Literal, _state: S) -> INPUTState {
         unsafe {
             kissat_add(self.solver, literal);
         }
         INPUTState::new()
     }
 
-    pub fn add_multiple<I, S>(&mut self, literals: I, _state: S) -> impl INPUT
+    /// Add multiple literals at once.
+    pub fn add_multiple<I, S>(&mut self, literals: I, _state: S) -> INPUTState
     where
         I: IntoIterator<Item = Literal>,
         S: State,
@@ -55,7 +64,9 @@ impl Solver {
         INPUTState::new()
     }
 
-    pub fn add_clause<I, S>(&mut self, clause: I, _state: S) -> impl INPUT
+    /// Add multiple literals as a single clause.
+    /// Adds the delimiting 0 to the end of the clause automatically.
+    pub fn add_clause<I, S>(&mut self, clause: I, _state: S) -> INPUTState
     where
         I: IntoIterator<Item = Literal>,
         S: State,
@@ -64,22 +75,58 @@ impl Solver {
         self.add(CLAUSE_END, INPUTState::new())
     }
 
-    pub fn solve<S: State>(&mut self, _state: S) -> Result<(SolverResult, AnyState), Error> {
+    /// Solve the formula input sofar.
+    /// Returns the state after solving. This can be any of INPUT, SAT or UNSAT
+    /// and can be dynamically translated to their counterpart states.
+    pub fn solve<S: State>(&mut self, _state: S) -> Result<AnyState, Error> {
         let result;
         unsafe {
             result = kissat_solve(self.solver);
         }
         let solver_result = SolverResult::try_from(result);
         solver_result
-            .map(|result| (result, AnyState::from(result)))
+            .map(|result| AnyState::from(result))
             .map_err(|_| Error::UnknownSolverResult)
     }
 
-    pub fn value<S: SAT>(
-        &self,
-        literal: Literal,
-        _state: S,
-    ) -> Result<(Assignment, impl SAT), Error> {
+    /// Solves a formula and returns a satisfying assignment.
+    /// Abstracts all state details away and constructs a new solver for each invocation.
+    pub fn solve_formula<F, C>(
+        formula: F,
+    ) -> Result<Option<HashMap<Literal, Option<Assignment>>>, Error>
+    where
+        F: IntoIterator<Item = C>,
+        C: IntoIterator<Item = Literal>,
+    {
+        let mut assignments = HashMap::new();
+        let (mut solver, init_state) = Solver::init();
+
+        let mut add_state = init_state;
+        for clause in formula {
+            for literal in clause {
+                assignments.insert(literal.abs(), None);
+                add_state = solver.add(literal, add_state);
+            }
+            add_state = solver.add(CLAUSE_END, add_state);
+        }
+
+        let solved_state = solver.solve(add_state)?;
+
+        if let AnyState::SAT(mut sat_state) = solved_state {
+            for (literal, assignment) in assignments.iter_mut() {
+                let (value, value_state) = solver.value(*literal, sat_state)?;
+                sat_state = value_state;
+                assignment.replace(value);
+            }
+
+            return Ok(Some(assignments));
+        }
+        Ok(None)
+    }
+
+    /// Evaluates the given literal for the found satisfying assignment.
+    /// A literal might be set to True, False or any of these two (Both).
+    pub fn value<S: SAT>(&self, literal: Literal, state: S) -> Result<(Assignment, S), Error> {
         use Assignment::*;
 
         let value;
@@ -88,9 +135,9 @@ impl Solver {
         }
 
         match value {
-            0 => Ok((Both, SATState::new())),
-            n if n == literal => Ok((True, SATState::new())),
-            n if n == -literal => Ok((False, SATState::new())),
+            0 => Ok((Both, state)),
+            n if n == literal => Ok((True, state)),
+            n if n == -literal => Ok((False, state)),
             n => Err(Error::UnassignedLiteral(n)),
         }
     }
@@ -114,19 +161,42 @@ mod test {
         let tie = 1;
         let shirt = 2;
 
-        let (mut solver, state) = Solver::init();
-        let state = solver.add_clause(vec![-tie, shirt], state);
-        let state = solver.add_clause(vec![tie, shirt], state);
-        let state = solver.add_clause(vec![-tie, -shirt], state);
+        let (mut solver, mut state) = Solver::init();
+        state = solver.add_clause(vec![-tie, shirt], state);
+        state = solver.add_clause(vec![tie, shirt], state);
+        state = solver.add_clause(vec![-tie, -shirt], state);
 
-        let (solver_result, state) = solver.solve(state)?;
-        assert_eq!(solver_result, SolverResult::Satisfiable);
-        let sat_state = SATState::try_from(state)?;
+        let solver_result_state = solver.solve(state)?;
+        let sat_state = SATState::try_from(solver_result_state)?;
 
         let (tie_result, sat_state) = solver.value(tie, sat_state)?;
         assert_eq!(tie_result, Assignment::False);
         let (shirt_result, _) = solver.value(shirt, sat_state)?;
         assert_eq!(shirt_result, Assignment::True);
+        Ok(())
+    }
+
+    #[test]
+    fn test_solve_formula() -> Result<(), Error> {
+        let x = 1;
+        let y = 2;
+        let z = 3;
+
+        // (~x || y) && (~y || z) && (x || ~z) && (x || y || z) - satisfied by x -> True, y -> True, z -> True
+        let formula1 = vec![vec![-x, y], vec![-y, z], vec![x, -z], vec![x, y, z]];
+
+        let satisfying_assignment = Solver::solve_formula(formula1)?;
+        if let Some(assignments) = satisfying_assignment {
+            assert_eq!(assignments.get(&x).unwrap(), &Some(Assignment::True));
+            assert_eq!(assignments.get(&y).unwrap(), &Some(Assignment::True));
+            assert_eq!(assignments.get(&z).unwrap(), &Some(Assignment::True));
+        }
+
+        // (x || y || ~z) && ~x && (x || y || z) && (x || ~y) - unsatisfiable (e.g. by resolution)
+        let formula2 = vec![vec![x, y, -z], vec![-x], vec![x, y, z], vec![x, -y]];
+        let unsat_result = Solver::solve_formula(formula2)?;
+        assert_eq!(unsat_result, None);
+
         Ok(())
     }
 }
