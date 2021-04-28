@@ -2,11 +2,14 @@ use std::convert::TryFrom;
 
 use crate::{Literal, SolverResult};
 
+/// State is used to encode arbitrary start states.
 pub trait State {}
 pub trait SAT: State {}
 pub trait UNSAT: State {}
 pub trait INPUT: State {}
 
+/// AnyState provides a safe way to encode variable
+/// end state that can also be safely converted to the actual state.
 #[derive(Debug)]
 pub enum AnyState {
     INPUT(INPUTState),
@@ -24,6 +27,8 @@ impl From<SolverResult> for AnyState {
     }
 }
 
+/// INPUTState is the actual state type which encodes
+/// that the solver received input in the last step.
 #[derive(Debug)]
 pub struct INPUTState {
     internal: (),
@@ -49,6 +54,10 @@ impl TryFrom<AnyState> for INPUTState {
     }
 }
 
+/// SATState is the actual state type which encodes
+/// that the solver has found the given formula to be
+/// satisfiable in a previous step and has not received
+/// more input afterwards.
 #[derive(Debug)]
 pub struct SATState {
     internal: (),
@@ -74,6 +83,10 @@ impl TryFrom<AnyState> for SATState {
     }
 }
 
+/// UNSATState is the actual state type which encodes
+/// that the solver has found the given formula to be
+/// unsatisfiable in a previous step and has not received
+/// more input afterwards.
 #[derive(Debug)]
 pub struct UNSATState {
     internal: (),

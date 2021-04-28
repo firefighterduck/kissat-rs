@@ -9,14 +9,16 @@ const CLAUSE_END: Literal = 0;
 
 pub use state::*;
 
+/// The solver result as defined for IPASIR interfaces.
 #[derive(TryFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 enum SolverResult {
-    Interrupted,
+    Interrupted, // implicitly 0
     Satisfiable = 10,
     Unsatisfiable = 20,
 }
 
+/// Satisfying assignment of a single literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assignment {
     True,
