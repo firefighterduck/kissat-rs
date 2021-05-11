@@ -31,7 +31,7 @@ fn main() {
 
     // Configure the kissat build system
     let configure = "./configure";
-    let configure_args = vec!["--quiet", "-fPIC"];
+    let configure_args = vec!["--ultimate", "-fPIC"];
     let configure_output = Command::new(configure)
         .args(configure_args)
         .current_dir(&kissat_dir)
