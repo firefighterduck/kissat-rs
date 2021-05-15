@@ -93,6 +93,8 @@ impl Solver {
 
     /// Solves a formula and returns a satisfying assignment.
     /// Abstracts all state details away and constructs a new solver for each invocation.
+    ///
+    /// In contrast to [`Solver::decide_formula`] this does construct a satisfying assignment.
     pub fn solve_formula<F, C>(
         formula: F,
     ) -> Result<Option<HashMap<Literal, Option<Assignment>>>, Error>
@@ -124,6 +126,29 @@ impl Solver {
             return Ok(Some(assignments));
         }
         Ok(None)
+    }
+
+    /// Decides whether a given formula is satisfiable or not.
+    /// Abstracts all state details away and constructs a new solver for each invocation.
+    ///
+    /// In contrast to [`Solver::solve_formula`] this does not construct a satisfying assignment.
+    pub fn decide_formula<F, C>(formula: F) -> Result<bool, Error>
+    where
+        F: IntoIterator<Item = C>,
+        C: IntoIterator<Item = Literal>,
+    {
+        let (mut solver, init_state) = Solver::init();
+
+        let mut add_state = init_state;
+        for clause in formula {
+            for literal in clause {
+                add_state = solver.add(literal, add_state);
+            }
+            add_state = solver.add(CLAUSE_END, add_state);
+        }
+
+        let solved_state = solver.solve(add_state)?;
+        Ok(matches!(solved_state, AnyState::SAT(_)))
     }
 
     /// Evaluates the given literal for the found satisfying assignment.
@@ -198,6 +223,26 @@ mod test {
         let formula2 = vec![vec![x, y, -z], vec![-x], vec![x, y, z], vec![x, -y]];
         let unsat_result = Solver::solve_formula(formula2)?;
         assert_eq!(unsat_result, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_decide_formula() -> Result<(), Error> {
+        let x = 1;
+        let y = 2;
+        let z = 3;
+
+        // (~x || y) && (~y || z) && (x || ~z) && (x || y || z) - satisfied by x -> True, y -> True, z -> True
+        let formula1 = vec![vec![-x, y], vec![-y, z], vec![x, -z], vec![x, y, z]];
+
+        let is_sat1 = Solver::decide_formula(formula1)?;
+        assert!(is_sat1);
+
+        // (x || y || ~z) && ~x && (x || y || z) && (x || ~y) - unsatisfiable (e.g. by resolution)
+        let formula2 = vec![vec![x, y, -z], vec![-x], vec![x, y, z], vec![x, -y]];
+        let is_sat2 = Solver::decide_formula(formula2)?;
+        assert!(!is_sat2);
 
         Ok(())
     }
