@@ -47,7 +47,12 @@ assert_eq!(unsat_result, None);
 
 # Scope and Development
 This crate is supposed to be a simple example of how a Rust interface for Kissat could be implemented.
-It doesn't aim at covering all of Kissats API as long as Kissat is still in active development (cf. the [Kissat repository](https://github.com/arminbiere/kissat)).
+It doesn't aim at covering all of Kissats API for now.
+
+# Known Problems
+Kissat does not build with mold.
+If you use mold to build your rust projects you have to disable it for building kissat-rs and any crates using it.
+Unfortunately, a crate local rustflag that would set a different linker does not help.
 
 # License
 Kissat-rs is licensed under the [MIT license](./LICENSE) in the same way as Kissat is.

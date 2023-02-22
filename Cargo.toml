@@ -1,11 +1,10 @@
 [package]
 name = "kissat-rs"
-version = "0.1.0"
+version = "0.1.1"
 description = "High-level Rust bindings for the Kissat SAT solver."
 license = "MIT"
-author = ["Florian Sextl <sextl@in.tum.de>"]
 repository = "https://github.com/firefighterduck/kissat-rs"
-edition = "2018"
+edition = "2021"
 readme = "README.md"
 categories = ["api-bindings"]
 

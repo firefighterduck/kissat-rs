@@ -87,7 +87,7 @@ impl Solver {
         }
         let solver_result = SolverResult::try_from(result);
         solver_result
-            .map(|result| AnyState::from(result))
+            .map(AnyState::from)
             .map_err(|_| Error::UnknownSolverResult)
     }
 

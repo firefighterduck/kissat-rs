@@ -1,4 +1,4 @@
-use std::convert::TryFrom;
+use std::{convert::TryFrom, marker::PhantomData};
 
 use crate::{Literal, SolverResult};
 
@@ -31,11 +31,13 @@ impl From<SolverResult> for AnyState {
 /// that the solver received input in the last step.
 #[derive(Debug)]
 pub struct INPUTState {
-    internal: (),
+    _internal: PhantomData<()>,
 }
 impl INPUTState {
     pub(crate) fn new() -> Self {
-        INPUTState { internal: () }
+        INPUTState {
+            _internal: PhantomData,
+        }
     }
 }
 impl State for INPUTState {}
@@ -47,8 +49,7 @@ impl TryFrom<AnyState> for INPUTState {
         match value {
             AnyState::INPUT(input) => Ok(input),
             state => Err(ConversionError(format!(
-                "Cannot convert from {:?} to INPUTState!",
-                state
+                "Cannot convert from {state:?} to INPUTState!"
             ))),
         }
     }
@@ -60,11 +61,13 @@ impl TryFrom<AnyState> for INPUTState {
 /// more input afterwards.
 #[derive(Debug)]
 pub struct SATState {
-    internal: (),
+    _internal: PhantomData<()>,
 }
 impl SATState {
     pub(crate) fn new() -> Self {
-        SATState { internal: () }
+        SATState {
+            _internal: PhantomData,
+        }
     }
 }
 impl State for SATState {}
@@ -76,8 +79,7 @@ impl TryFrom<AnyState> for SATState {
         match value {
             AnyState::SAT(sat) => Ok(sat),
             state => Err(ConversionError(format!(
-                "Cannot convert from {:?} to SATState!",
-                state
+                "Cannot convert from {state:?} to SATState!"
             ))),
         }
     }
@@ -89,11 +91,13 @@ impl TryFrom<AnyState> for SATState {
 /// more input afterwards.
 #[derive(Debug)]
 pub struct UNSATState {
-    internal: (),
+    _internal: PhantomData<()>,
 }
 impl UNSATState {
     pub(crate) fn new() -> Self {
-        UNSATState { internal: () }
+        UNSATState {
+            _internal: PhantomData,
+        }
     }
 }
 impl State for UNSATState {}
@@ -105,8 +109,7 @@ impl TryFrom<AnyState> for UNSATState {
         match value {
             AnyState::UNSAT(unsat) => Ok(unsat),
             state => Err(ConversionError(format!(
-                "Cannot convert from {:?} to UNSATState!",
-                state
+                "Cannot convert from {state:?} to UNSATState!"
             ))),
         }
     }
