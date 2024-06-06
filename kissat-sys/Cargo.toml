@@ -1,6 +1,6 @@
 [package]
 name = "kissat-sys"
-version = "0.1.1"
+version = "0.1.2"
 description = " Low-level Rust bindings for the Kissat SAT solver."
 license = "MIT"
 repository = "https://github.com/firefighterduck/kissat-rs"
@@ -9,4 +9,4 @@ readme = "README.md"
 categories = ["external-ffi-bindings"]
 
 [build-dependencies]
-bindgen = "0.64.0"
+bindgen = "0.69.4"

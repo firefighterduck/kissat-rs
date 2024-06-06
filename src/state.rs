@@ -116,7 +116,7 @@ impl TryFrom<AnyState> for UNSATState {
 }
 
 #[derive(Debug)]
-pub struct ConversionError(String);
+pub struct ConversionError(pub String);
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
