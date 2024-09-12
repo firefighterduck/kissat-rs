@@ -27,6 +27,7 @@ pub enum Assignment {
 }
 
 /// A simple wrapper struct for the Kissat solver.
+///
 /// Exposes a safe subset of the partial IPASIR interface that
 /// Kissat exposes. Uses a type-checked state system to disallow
 /// access to these functions (e.g. calling `value` before `solve`).

@@ -31,7 +31,7 @@ fn main() {
 
     // Configure the kissat build system
     let configure = "./configure";
-    let configure_args = vec!["--ultimate", "-fPIC"];
+    let configure_args = vec!["--ultimate", "-fpic"];
     let configure_output = Command::new(configure)
         .args(configure_args)
         .current_dir(&kissat_dir)
@@ -62,7 +62,7 @@ fn main() {
     // Generate bindings
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .blocklist_type("_Float64x")
         .blocklist_function("strtold")
         .blocklist_function("qecvt")
