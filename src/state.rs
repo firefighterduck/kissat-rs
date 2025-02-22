@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, ffi::c_int};
+use std::{convert::{Infallible, TryFrom}, ffi::c_int, num::TryFromIntError};
 
 use crate::{Literal, Solver, SolverResult};
 
@@ -110,6 +110,8 @@ pub enum Error {
     UnknownSolverResult,
     #[error("Clause was not finished before calling solve")]
     UnrecoverableOpenClauseWhenSolving,
+    #[error("Value does not fit into i32 used for literals")]
+    IncompatibleNumeral
 }
 
 #[derive(thiserror::Error,Debug)]
@@ -138,5 +140,17 @@ impl From<Error2> for Error {
             Error2::WrappedError(e) => e,
             Error2::RecoverableOpenClauseWhenSolving(_) => Error::UnrecoverableOpenClauseWhenSolving
         }
+    }
+}
+
+impl From<TryFromIntError> for Error {
+    fn from(_: TryFromIntError) -> Self {
+        Self::IncompatibleNumeral
+    }
+}
+
+impl From<Infallible> for Error {
+    fn from(_: Infallible) -> Self {
+        unreachable!()
     }
 }

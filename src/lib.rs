@@ -1,13 +1,13 @@
 //! Crate that provides a high-level API utilizing the kissat SAT solver.
 
+use derive_more::Debug;
 use derive_try_from_primitive::TryFromPrimitive;
 use kissat_sys::{kissat, kissat_add, kissat_init, kissat_release, kissat_solve, kissat_value};
-use std::{collections::HashMap, convert::TryFrom, ops::Neg, ptr::NonNull};
-use derive_more::Debug;
+use std::{collections::HashMap, convert::TryFrom, num::NonZeroI32, ops::Neg, ptr::NonNull};
 
 mod state;
-pub use state::{Error,Error2};
 use state::*;
+pub use state::{Error, Error2};
 
 mod literal;
 pub use literal::*;
@@ -64,6 +64,38 @@ impl Solver<INPUTState> {
         }
     }
 
+    /// Finishes a clause by adding the correct 0 literal to the solver's stack.
+    ///
+    /// Should be preferred over calling [`Solver::add`] or [`Solver::add_raw`]
+    /// with the corresponding clause end literal since it requires less runtime checks.
+    fn finish_clause(self) -> Self {
+        unsafe {
+            // SAFETY:
+            // The pointer is non-null and points to a kissat solver.
+            kissat_add(self.solver.solver_pt.as_ptr(), CLAUSE_END.into());
+        }
+
+        self.change_to_state(INPUTState::InputFinished)
+    }
+
+    /// Finishes a clause by adding the correct 0 literal to the solver's stack.
+    ///
+    /// Should be preferred over calling [`Solver::add`] or [`Solver::add_raw`]
+    /// with the corresponding clause end literal since it requires less runtime checks.
+    fn finish_clause_check(self) -> Self {
+        if let INPUTState::OpenClause = self.state {
+            unsafe {
+                // SAFETY:
+                // The pointer is non-null and points to a kissat solver.
+                kissat_add(self.solver.solver_pt.as_ptr(), CLAUSE_END.into());
+            }
+
+            self.change_to_state(INPUTState::InputFinished)
+        } else {
+            self
+        }
+    }
+
     /// Solve the formula input so far.
     /// Sets the solver's state to one of INPUT, SAT or UNSAT.
     ///
@@ -76,7 +108,9 @@ impl Solver<INPUTState> {
         }
 
         // Small hack to stay DRY. This state will never matter.
-        self.change_state::<UNSATState>().solve().map_err(Into::into)
+        self.change_state::<UNSATState>()
+            .solve()
+            .map_err(Into::into)
     }
 }
 
@@ -98,7 +132,7 @@ impl<S: State> Solver<S> {
     /// Add a new literal to the current clause or end the clause with value 0.
     /// Switches from any state to INPUT (e.g. for incremental solving, which Kissat
     /// currently doesn't support).
-    pub fn add_literal(self, literal: Literal) -> Solver<INPUTState> {
+    fn add_literal(self, literal: Literal) -> Solver<INPUTState> {
         unsafe {
             // SAFETY:
             // The pointer is non-null and points to a kissat solver.
@@ -116,13 +150,9 @@ impl<S: State> Solver<S> {
     /// Switches from any state to INPUT (e.g. for incremental solving, which Kissat
     /// currently doesn't support).
     ///
-    /// Accepts raw integers and the like but will fail if they don't adhere to
+    /// Accepts raw i32 and the like but will fail if they don't adhere to
     /// the requirements of [`Literal`].
-    pub fn add_literal_raw<N>(self, literal: N) -> Result<Solver<INPUTState>, Error>
-    where
-        Literal: TryFrom<N>,
-        Error: From<<Literal as TryFrom<N>>::Error>,
-    {
+    fn add_literal_raw(self, literal: i32) -> Result<Solver<INPUTState>, Error> {
         let literal = Literal::try_from(literal)?;
 
         unsafe {
@@ -138,8 +168,25 @@ impl<S: State> Solver<S> {
         }
     }
 
+    /// Add a new literal to the current clause or end the clause with value 0.
+    /// Switches from any state to INPUT (e.g. for incremental solving, which Kissat
+    /// currently doesn't support).
+    ///
+    /// If the numeral is not a valid [`Literal`], the function will fail.
+    fn add_literal_raw_nonzero(self, literal: NonZeroI32) -> Result<Solver<INPUTState>, Error> {
+        let literal = Literal::try_from(literal)?;
+
+        unsafe {
+            // SAFETY:
+            // The pointer is non-null and points to a kissat solver.
+            kissat_add(self.solver.solver_pt.as_ptr(), literal.into());
+        }
+
+        Ok(self.change_to_state(INPUTState::OpenClause))
+    }
+
     /// Add multiple literals at once.
-    pub fn add_multiple<I>(self, literals: I) -> Solver<INPUTState>
+    fn add_multiple<I>(self, literals: I) -> Solver<INPUTState>
     where
         I: IntoIterator<Item = Literal>,
     {
@@ -152,45 +199,68 @@ impl<S: State> Solver<S> {
 
     /// Add multiple literals at once.
     ///
-    /// Accepts raw integers and the like but will fail if they don't adhere to
-    /// the requirements of [`Literal`].
-    pub fn add_multiple_raw<I, N>(self, literals: I) -> Result<Solver<INPUTState>, Error>
+    /// If any of the numerals cannot be converted to [`NonZeroI32`] or is no valid [`Literal`],
+    /// the function will fail.
+    fn add_multiple_raw<I, N>(self, literals: I) -> Result<Solver<INPUTState>, Error>
     where
         I: IntoIterator<Item = N>,
-        Literal: TryFrom<N>,
-        Error: From<<Literal as TryFrom<N>>::Error>,
+        NonZeroI32: TryFrom<N>,
     {
         let mut solver: Solver<INPUTState> = self.change_state::<INPUTState>();
         for literal in literals {
-            solver = solver.add_literal_raw(literal)?;
+            solver = match NonZeroI32::try_from(literal) {
+                Ok(n) => solver.add_literal_raw_nonzero(n)?,
+                Err(_) => return Err(Error::IncompatibleNumeral),
+            }
         }
         Ok(solver)
     }
 
-    /// Add multiple literals as a single clause.
+    /// Add a stream of literals to the solver. The stream can contain zeroes
+    /// to denote the end of individual clauses. Otherwise everything will be put
+    /// into a single clause (which will be automatically closed if the iterator doesn't
+    /// end in a zero).
+    ///
+    /// If any of the numerals cannot be converted to i32 or is no valid [`Literal`],
+    /// the function will fail.
+    pub fn add_multiple_stream<I, N>(self, literals: I) -> Result<Solver<INPUTState>, Error>
+    where
+        I: IntoIterator<Item = N>,
+        i32: TryFrom<N>,
+    {
+        let mut solver: Solver<INPUTState> = self.change_state::<INPUTState>();
+        for literal in literals {
+            solver = match i32::try_from(literal) {
+                Ok(n) => solver.add_literal_raw(n)?,
+                Err(_) => return Err(Error::IncompatibleNumeral),
+            }
+        }
+        Ok(solver.finish_clause_check())
+    }
+
+    /// Add multiple literals as a single clause, which should not contain any CLAUSE_END.
     /// Adds the delimiting 0 to the end of the clause automatically.
     pub fn add_clause<I>(self, clause: I) -> Solver<INPUTState>
     where
         I: IntoIterator<Item = Literal>,
     {
         let solver = self.add_multiple(clause);
-        solver.add_literal(CLAUSE_END)
+        solver.finish_clause()
     }
 
     /// Add multiple literals as a single clause.
     /// Adds the delimiting 0 to the end of the clause automatically.
     ///
-    /// Accepts raw integers and the like but will fail if they don't adhere to
-    /// the requirements of [`Literal`].
+    /// If any of the numerals cannot be converted to [`NonZeroI32`] or is no valid [`Literal`],
+    /// the function will fail.
     pub fn add_clause_raw<I, N>(self, clause: I) -> Result<Solver<INPUTState>, Error>
     where
         I: IntoIterator<Item = N>,
-        Literal: TryFrom<N>,
-        Error: From<<Literal as TryFrom<N>>::Error>,
+        NonZeroI32: TryFrom<N>,
     {
         let mut solver: Solver<INPUTState> = self.change_state::<INPUTState>();
         solver = solver.add_multiple_raw(clause)?;
-        Ok(solver.add_literal(CLAUSE_END))
+        Ok(solver.finish_clause())
     }
 }
 
@@ -285,9 +355,9 @@ unsafe impl<S: State> Send for Solver<S> {}
 /// Abstracts all state details away and constructs a new solver for each invocation.
 ///
 /// In contrast to [`decide_formula`] this does construct a satisfying assignment.
-/// The type restrictions are meant to allow the function to work with any numeric
-/// type that can easily be translated to an `i32` and thus to a  [`Literal`].
-/// We provide all required implementations for `i32` and `u32`.
+/// If any of the numerals cannot be converted to [`NonZeroI32`] or is no valid [`Literal`],
+/// the function will fail.
+/// This variant of the function also does not allow zeroes in the formula.
 /// ```
 /// # use kissat_rs::*;
 /// # let x: i32 = 1;
@@ -311,15 +381,13 @@ unsafe impl<S: State> Send for Solver<S> {}
 ///
 /// # Ok::<(),Error>(())
 /// ```
-pub fn solve_formula<F, C, N>(
-    formula: F,
-) -> Result<Option<HashMap<N, Option<Assignment>>>, Error>
+pub fn solve_formula<F, C, N>(formula: F) -> Result<Option<HashMap<N, Option<Assignment>>>, Error>
 where
     F: IntoIterator<Item = C>,
     C: IntoIterator<Item = N>,
-    Literal: TryFrom<N>,
+    NonZeroI32: TryFrom<N>,
+    Error: From<<NonZeroI32 as TryFrom<N>>::Error>,
     N: Abs<Result = N> + std::cmp::Eq + std::hash::Hash + std::marker::Copy,
-    Error: From<<Literal as TryFrom<N>>::Error>,
 {
     let mut assignments = HashMap::new();
     let mut solver = Solver::init();
@@ -327,16 +395,18 @@ where
     for clause in formula {
         for literal in clause {
             assignments.insert(literal.abs(), None);
-            solver = solver.add_literal_raw(literal)?;
+            let n = NonZeroI32::try_from(literal)?;
+            solver = solver.add_literal_raw_nonzero(n)?;
         }
-        solver = solver.add_literal(CLAUSE_END);
+        solver = solver.finish_clause();
     }
 
     let solved_state = solver.solve()?;
 
     if let Ok(solver) = solved_state.checked_sat() {
         for (literal, assignment) in assignments.iter_mut() {
-            let literal = Literal::try_from(*literal)?;
+            let n = NonZeroI32::try_from(*literal)?;
+            let literal = Literal::try_from(n)?;
             let value = solver.value(literal)?;
             assignment.replace(value);
         }
@@ -350,9 +420,9 @@ where
 /// Abstracts all state details away and constructs a new solver for each invocation.
 ///
 /// In contrast to [`solve_formula`] this does not construct a satisfying assignment.
-/// The type restrictions are meant to allow the function to work with any numeric
-/// type that can easily be translated to an `i32` and thus to a  [`Literal`].
-/// We provide all required implementations for `i32` and `u32`.
+/// If any of the numerals cannot be converted to [`NonZeroI32`] or is no valid [`Literal`],
+/// the function will fail.
+/// This variant of the function does not allow zeroes in the formula.
 /// ```
 /// # use kissat_rs::*;
 /// # let x = 1;
@@ -375,17 +445,115 @@ pub fn decide_formula<F, C, N>(formula: F) -> Result<bool, Error>
 where
     F: IntoIterator<Item = C>,
     C: IntoIterator<Item = N>,
-    Literal: TryFrom<N>,
-    Error: From<<Literal as TryFrom<N>>::Error>,
+    NonZeroI32: TryFrom<N>,
 {
     let mut solver = Solver::init();
 
     for clause in formula {
-        for literal in clause {
-            solver = solver.add_literal_raw(literal)?;
-        }
-        solver = solver.add_literal(CLAUSE_END);
+        solver = solver.add_clause_raw(clause)?;
     }
+
+    let solved_state = solver.solve()?.checked_sat();
+    Ok(solved_state.is_ok())
+}
+
+/// Variant of [`solve_formula`] that allows zeroes to appear in the iterator to denote the end of a clause.
+///
+/// Solves a formula and returns a satisfying assignment.
+/// Abstracts all state details away and constructs a new solver for each invocation.
+/// If any of the numerals cannot be converted to i32 or is no valid [`Literal`],
+/// the function will fail.
+/// ```
+/// # use kissat_rs::*;
+/// # let x: i32 = 1;
+/// # let y = 2;
+/// # let z = 3;
+/// let sep = 0;
+///
+/// // (~x || y) && (~y || z) && (x || ~z) && (x || y || z) - satisfied by x -> True, y -> True, z -> True
+/// let formula1 = vec![-x, y, sep, -y, z, sep, x, -z, sep, x, y, z];
+///
+/// let satisfying_assignment = solve_formula_stream(formula1)?;
+/// if let Some(assignments) = satisfying_assignment {
+///     assert_eq!(assignments.get(&x).unwrap(), &Some(Assignment::True));
+///     assert_eq!(assignments.get(&y).unwrap(), &Some(Assignment::True));
+///     assert_eq!(assignments.get(&z).unwrap(), &Some(Assignment::True));
+/// }
+///
+/// // (x || y || ~z) && ~x && (x || y || z) && (x || ~y) - unsatisfiable (e.g. by resolution)
+/// let formula2 = vec![x, y, -z, sep, -x, sep, x, y, z, sep, x, -y];
+/// let unsat_result = solve_formula_stream(formula2)?;
+/// assert_eq!(unsat_result, None);
+///
+/// # Ok::<(),Error>(())
+/// ```
+pub fn solve_formula_stream<F, N>(
+    formula: F,
+) -> Result<Option<HashMap<N, Option<Assignment>>>, Error>
+where
+    F: IntoIterator<Item = N>,
+    i32: TryFrom<N>,
+    Error: From<<i32 as TryFrom<N>>::Error>,
+    N: Abs<Result = N> + std::cmp::Eq + std::hash::Hash + std::marker::Copy,
+{
+    let mut assignments = HashMap::new();
+    let mut solver = Solver::init();
+
+    for literal in formula {
+        assignments.insert(literal.abs(), None);
+        solver = solver.add_literal_raw(i32::try_from(literal)?)?;
+    }
+    solver = solver.finish_clause_check();
+
+    let solved_state = solver.solve()?;
+
+    if let Ok(solver) = solved_state.checked_sat() {
+        for (literal, assignment) in assignments.iter_mut() {
+            let n = i32::try_from(*literal)?;
+            let literal = Literal::try_from(n)?;
+            let value = solver.value(literal)?;
+            assignment.replace(value);
+        }
+
+        return Ok(Some(assignments));
+    }
+    Ok(None)
+}
+
+/// Variant of [`decide_formula`] that allows zeroes to appear in the iterator to denote the end of a clause.
+///
+/// Decides whether a given formula is satisfiable or not.
+/// Abstracts all state details away and constructs a new solver for each invocation.
+/// If any of the numerals cannot be converted to i32 or is no valid [`Literal`],
+/// the function will fail.
+/// ```
+/// # use kissat_rs::*;
+/// # let x = 1;
+/// # let y = 2;
+/// # let z = 3;
+/// let sep = 0;
+///
+/// // (~x || y) && (~y || z) && (x || ~z) && (x || y || z) - satisfied by x -> True, y -> True, z -> True
+/// let formula1 = vec![-x, y, sep, -y, z, sep, x, -z, sep, x, y, z];
+/// let is_sat1 = decide_formula_stream(formula1)?;
+///
+/// assert!(is_sat1);
+///
+/// // (x || y || ~z) && ~x && (x || y || z) && (x || ~y) - unsatisfiable (e.g. by resolution)
+/// let formula2 = vec![x, y, -z, sep, -x, sep, x, y, z, sep, x, -y];
+/// let is_sat2 = decide_formula_stream(formula2)?;
+///
+/// assert!(!is_sat2);
+/// # Ok::<(),Error>(())
+///```
+pub fn decide_formula_stream<F, N>(formula: F) -> Result<bool, Error>
+where
+    F: IntoIterator<Item = N>,
+    i32: TryFrom<N>,
+{
+    let mut solver = Solver::init();
+
+    solver = solver.add_multiple_stream(formula)?;
 
     let solved_state = solver.solve()?.checked_sat();
     Ok(solved_state.is_ok())
@@ -413,30 +581,6 @@ mod test {
         assert_eq!(tie_result, Assignment::False);
         let shirt_result = solver_result_state.value(shirt)?;
         assert_eq!(shirt_result, Assignment::True);
-        Ok(())
-    }
-
-    #[test]
-    fn test_literal_boundaries() -> Result<(), Error> {
-        // MIN is not allowed
-        let min = i32::MIN;
-        assert!(matches!(
-            Literal::try_from(min),
-            Err(Error::ImpossibleLiteral(_))
-        ));
-
-        // EXT_MAX_VAR is allowed
-        let max = EXT_MAX_VAR;
-        let max_lit = Literal::try_from(max)?;
-
-        // MIN + 1 is not allowed
-        let min_lit = Literal::try_from(min + 1);
-        assert!(matches!(min_lit, Err(Error::ImpossibleLiteral(_))));
-
-        // - EXT_MAX_VAR is allowed
-        let max_neg = max_lit.neg()?;
-        assert!(min < max_neg.into());
-
         Ok(())
     }
 }
